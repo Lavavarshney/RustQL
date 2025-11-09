@@ -40,68 +40,152 @@ impl Database {
         table.rows.push(insert_stmt.values);
     }
     fn execute_select(&self, select_stmt: parser::SelectStatement) {
-    let table = match self.tables.get(&select_stmt.table_name) {
-        Some(t) => t,
-        None => {
-            println!("Table '{}' not found", select_stmt.table_name);
-            return;
-        }
-    };
-
-    if table.rows.is_empty() {
-        println!("No rows found in table '{}'", select_stmt.table_name);
-        return;
-    }
-
-    // Check if SELECT *
-    if select_stmt.values.len() == 1 {
-        if let Value::Star = select_stmt.values[0] {
-            // Print all columns
-            for row in &table.rows {
-                let row_str: Vec<String> = row.iter()
-                    .map(|v| match v {
-                        Value::Int(i) => i.to_string(),
-                        Value::Str(s) => format!("'{}'", s),
-                        _ => String::from("NULL"),
-                    })
-                    .collect();
-                println!("{:?}", row_str);
+        let table = match self.tables.get(&select_stmt.table_name) {
+            Some(t) => t,
+            None => {
+                println!("Table '{}' not found", select_stmt.table_name);
+                return;
             }
+        };
+
+        if table.rows.is_empty() {
+            println!("No rows found in table '{}'", select_stmt.table_name);
             return;
         }
-    }
 
-    // Otherwise SELECT specific columns
-    for row in &table.rows {
-        let mut selected = Vec::new();
+        // Build headers and rows as strings
+        let mut headers: Vec<String> = Vec::new();
+        let mut rows_out: Vec<Vec<String>> = Vec::new();
+
+        // If SELECT * -> headers are table.columns (fallback to colN if empty)
+        if select_stmt.values.len() == 1 {
+            if let Value::Star = select_stmt.values[0] {
+                if !table.columns.is_empty() {
+                    headers = table.columns.clone();
+                } else {
+                    headers = (0..table.rows[0].len()).map(|i| format!("col{}", i)).collect();
+                }
+
+                for row in &table.rows {
+                    let row_str: Vec<String> = row.iter().map(|v| match v {
+                        Value::Int(i) => i.to_string(),
+                        Value::Str(s) => s.clone(),
+                        _ => String::from("NULL"),
+                    }).collect();
+                    rows_out.push(row_str);
+                }
+
+                self.print_table(&headers, &rows_out);
+                return;
+            }
+        }
+
+        // Otherwise explicit column selection
+        // Build headers from requested identifiers
         for val in &select_stmt.values {
             match val {
                 Value::Identifier(name) => {
-                    // Try to find column by name
-                    let col_index = if let Some(idx) = table.columns.iter().position(|c| c == name) {
-                        idx
-                    } else if name.starts_with("col") {
-                        name[3..].parse::<usize>().unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    
-                    if col_index < row.len() {
-                        match &row[col_index] {
-                            Value::Int(i) => selected.push(i.to_string()),
-                            Value::Str(s) => selected.push(format!("'{}'", s)),
-                            _ => selected.push(String::from("NULL")),
+                    // Resolve to actual column name if possible
+                    if name.starts_with("col") {
+                        // positional
+                        if let Ok(idx) = name[3..].parse::<usize>() {
+                            if idx < table.columns.len() {
+                                headers.push(table.columns[idx].clone());
+                            } else {
+                                headers.push(name.clone());
+                            }
+                        } else {
+                            headers.push(name.clone());
                         }
+                    } else if let Some(idx) = table.columns.iter().position(|c| c == name) {
+                        headers.push(table.columns[idx].clone());
+                    } else {
+                        headers.push(name.clone());
                     }
                 }
                 _ => {}
             }
         }
-        if !selected.is_empty() {
-            println!("{:?}", selected);
+
+        // For each row, extract the requested columns
+        for row in &table.rows {
+            let mut row_strs: Vec<String> = Vec::new();
+            for val in &select_stmt.values {
+                match val {
+                    Value::Identifier(name) => {
+                        let col_index = if name.starts_with("col") {
+                            name[3..].parse::<usize>().unwrap_or(0)
+                        } else {
+                            table.columns.iter().position(|c| c == name).unwrap_or(0)
+                        };
+                        if let Some(cell) = row.get(col_index) {
+                            match cell {
+                                Value::Int(i) => row_strs.push(i.to_string()),
+                                Value::Str(s) => row_strs.push(s.clone()),
+                                _ => row_strs.push(String::from("NULL")),
+                            }
+                        } else {
+                            row_strs.push(String::new());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rows_out.push(row_strs);
         }
+
+        self.print_table(&headers, &rows_out);
     }
-}
+
+    // Helper: pretty-print table
+    fn print_table(&self, headers: &[String], rows: &[Vec<String>]) {
+        // compute column widths
+        let cols = headers.len();
+        let mut widths = headers.iter().map(|h| h.len()).collect::<Vec<usize>>();
+        for row in rows {
+            for (i, cell) in row.iter().enumerate().take(cols) {
+                if cell.len() > widths[i] {
+                    widths[i] = cell.len();
+                }
+            }
+        }
+
+        // horizontal border builders
+        let mut sep = String::new();
+        sep.push('+');
+        for w in &widths {
+            sep.push_str(&"-".repeat(*w + 2));
+            sep.push('+');
+        }
+
+        // print header
+        println!("{}", sep);
+        // header row
+        let mut header_row = String::from("|");
+        for (i, h) in headers.iter().enumerate() {
+            let pad = widths[i].saturating_sub(h.len());
+            header_row.push(' ');
+            header_row.push_str(h);
+            header_row.push_str(&" ".repeat(pad + 1));
+            header_row.push('|');
+        }
+        println!("{}", header_row);
+        println!("{}", sep);
+
+        // print rows
+        for row in rows {
+            let mut row_line = String::from("|");
+            for (i, cell) in row.iter().enumerate().take(cols) {
+                let pad = widths[i].saturating_sub(cell.len());
+                row_line.push(' ');
+                row_line.push_str(cell);
+                row_line.push_str(&" ".repeat(pad + 1));
+                row_line.push('|');
+            }
+            println!("{}", row_line);
+        }
+        println!("{}", sep);
+    }
 fn execute_create(&mut self, create_stmt: parser::CreateTableStatement) {
         self.tables.insert(
             create_stmt.table_name, 
