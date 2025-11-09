@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustql"
+name = "rustql_lavanya"
 version = "0.1.0"
 dependencies = [
  "bincode",
