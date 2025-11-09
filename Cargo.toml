@@ -1,7 +1,12 @@
 [package]
-name = "mini_sql_engine"
+name = "rustql"
 version = "0.1.0"
-edition = "2024"
+edition = "2024"  
+description = "A lightweight, persistent SQL engine in Rust"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lavavarshney/rustql"
+keywords = ["sql", "database", "cli", "rust"]
+categories = ["command-line-utilities", "database"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
